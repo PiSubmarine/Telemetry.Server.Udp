@@ -73,7 +73,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
         EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(snapshot));
+            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
         EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x01}, std::byte{0x02}})));
@@ -131,7 +131,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
         EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(snapshot));
+            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
         EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x03}})));
@@ -180,7 +180,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
         EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(snapshot));
+            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
         EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x04}})));
@@ -220,10 +220,35 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
                 Lease::Api::LeaseValidation{.IsValid = false})));
         EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(snapshot));
+            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
         EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x05}})));
+
+        server.Tick(
+            std::chrono::nanoseconds(std::chrono::milliseconds(100)),
+            std::chrono::nanoseconds(std::chrono::milliseconds(10)));
+    }
+
+    TEST(ServerTest, TickSkipsSendingWhenSnapshotIsUnavailable)
+    {
+        StrictMock<Api::ISourceMock> source;
+        StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
+        StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
+        StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
+        StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
+
+        EXPECT_CALL(resourceRegistry, RegisterResource(_))
+            .WillOnce(Return(Error::Api::Result<void>{}));
+
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+
+        EXPECT_CALL(receiver, TryReceive())
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+        EXPECT_CALL(source, GetSnapshot())
+            .WillOnce(Return(std::unexpected(Error::Api::MakeError(Error::Api::ErrorCondition::CommunicationError))));
 
         server.Tick(
             std::chrono::nanoseconds(std::chrono::milliseconds(100)),

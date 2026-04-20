@@ -55,8 +55,13 @@ namespace PiSubmarine::Telemetry::Server::Udp
 			HandleSubscriptionDatagram(receiveResult->value(), m_LeaseValidator, m_Subscribers);
 		}
 
-		const auto snapshot = m_Source.GetSnapshot();
-		const auto payloadResult = m_Serializer.Serialize(snapshot);
+		const auto snapshotResult = m_Source.GetSnapshot();
+		if (!snapshotResult.has_value())
+		{
+			return;
+		}
+
+		const auto payloadResult = m_Serializer.Serialize(*snapshotResult);
 		if (!payloadResult.has_value())
 		{
 			return;
