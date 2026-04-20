@@ -1,8 +1,6 @@
 #include "PiSubmarine/Telemetry/Server/Udp/Server.h"
 
-#include <sstream>
 #include <string>
-#include <vector>
 
 namespace PiSubmarine::Telemetry::Server::Udp
 {
@@ -10,12 +8,14 @@ namespace PiSubmarine::Telemetry::Server::Udp
 		Api::ISource& source,
 		Lease::Api::IResourceRegistry& resourceRegistry,
 		const Lease::Api::ILeaseValidator& leaseValidator,
+		const ::PiSubmarine::Telemetry::ISerializer& serializer,
 		::PiSubmarine::Udp::Api::IReceiver& receiver,
 		::PiSubmarine::Udp::Api::ISender& sender
 	)
 		: m_Source(source),
 		  m_ResourceRegistry(resourceRegistry),
 		  m_LeaseValidator(leaseValidator),
+		  m_Serializer(serializer),
 		  m_Receiver(receiver),
 		  m_Sender(sender)
 	{
@@ -56,7 +56,11 @@ namespace PiSubmarine::Telemetry::Server::Udp
 		}
 
 		const auto snapshot = m_Source.GetSnapshot();
-		const auto payload = SerializeSnapshot(snapshot);
+		const auto payloadResult = m_Serializer.Serialize(snapshot);
+		if (!payloadResult.has_value())
+		{
+			return;
+		}
 
 		for (auto iterator = m_Subscribers.begin(); iterator != m_Subscribers.end();)
 		{
@@ -72,7 +76,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
 			const ::PiSubmarine::Udp::Api::Datagram datagram{
 				.Peer = iterator->second.Endpoint,
-				.Payload = payload
+				.Payload = *payloadResult
 			};
 
 			const auto sendResult = m_Sender.Send(datagram);
@@ -114,72 +118,5 @@ namespace PiSubmarine::Telemetry::Server::Udp
 			.Lease = std::move(leaseId),
 			.Endpoint = datagram.Peer
 		};
-	}
-
-	std::vector<std::byte> Server::SerializeSnapshot(const Api::Snapshot& snapshot)
-	{
-		std::ostringstream stream;
-
-		stream << "depth=";
-		if (snapshot.Depth.has_value())
-		{
-			stream << snapshot.Depth->Value;
-		}
-		else
-		{
-			stream << "none";
-		}
-
-		stream << ";distance_to_seafloor=";
-		if (snapshot.DistanceToSeaFloor.has_value())
-		{
-			stream << snapshot.DistanceToSeaFloor->Value;
-		}
-		else
-		{
-			stream << "none";
-		}
-
-		stream << ";battery_soc=";
-		if (snapshot.BatteryState.has_value())
-		{
-			stream << static_cast<double>(snapshot.BatteryState->StateOfCharge);
-		}
-		else
-		{
-			stream << "none";
-		}
-
-		stream << ";ballast=";
-		if (snapshot.BallastPosition.has_value())
-		{
-			stream << static_cast<double>(*snapshot.BallastPosition);
-		}
-		else
-		{
-			stream << "none";
-		}
-
-		stream << ";thrusters=";
-		for (std::size_t index = 0; index < snapshot.Thrusters.size(); ++index)
-		{
-			if (index != 0)
-			{
-				stream << ",";
-			}
-
-			stream << static_cast<int>(snapshot.Thrusters[index].Operational);
-		}
-
-		const auto stringPayload = stream.str();
-		std::vector<std::byte> payload;
-		payload.reserve(stringPayload.size());
-
-		for (const char character : stringPayload)
-		{
-			payload.push_back(static_cast<std::byte>(character));
-		}
-
-		return payload;
 	}
 }

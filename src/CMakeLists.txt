@@ -16,6 +16,9 @@ target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Lease.Api)
 PiSubmarineAddDependency("https://github.com/PiSubmarine/Telemetry.Api.git" "")
 target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Telemetry.Api)
 
+PiSubmarineAddDependency("https://github.com/PiSubmarine/Telemetry.Serialization.Api.git" "")
+target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Telemetry.Serialization.Api)
+
 PiSubmarineAddDependency("https://github.com/PiSubmarine/Time.Tickable.Api.git" "")
 target_link_libraries(${PISUBMARINE_MODULE_NAME} PUBLIC PiSubmarine.Time.Tickable.Api)
 

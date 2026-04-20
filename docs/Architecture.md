@@ -11,6 +11,7 @@ The server owns:
 - reception of UDP subscription packets
 - validation of telemetry subscriptions against `Lease.Api`
 - mapping `LeaseId -> UDP endpoint`
+- snapshot serialization through `Telemetry.Serialization.Api`
 - sending the current snapshot to all valid subscribers on tick
 
 It does not own:
@@ -30,7 +31,6 @@ It does not own:
 
 ## Packet format
 
-The current implementation serializes snapshots into a simple textual payload so
-the lease/subscription flow can be exercised before a protobuf schema exists.
-This is intentionally temporary and should later move to a dedicated telemetry
-protocol module.
+The current implementation delegates snapshot serialization to
+`Telemetry.Serialization.Api`, so transport logic stays independent from the
+chosen payload format.

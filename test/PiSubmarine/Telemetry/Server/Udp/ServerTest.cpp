@@ -5,6 +5,7 @@
 #include "PiSubmarine/Lease/Api/ILeaseValidatorMock.h"
 #include "PiSubmarine/Lease/Api/IResourceRegistryMock.h"
 #include "PiSubmarine/Telemetry/Api/ISourceMock.h"
+#include "PiSubmarine/Telemetry/ISerializerMock.h"
 #include "PiSubmarine/Telemetry/Server/Udp/Server.h"
 #include "PiSubmarine/Udp/Api/IReceiverMock.h"
 #include "PiSubmarine/Udp/Api/ISenderMock.h"
@@ -23,6 +24,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
 
@@ -33,7 +35,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
                             .LeaseDuration = std::chrono::milliseconds(3000)}}))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, receiver, sender);
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
     }
 
     TEST(ServerTest, TickSendsSnapshotToValidSubscribers)
@@ -41,6 +43,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
         Api::Snapshot snapshot{};
@@ -49,7 +52,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, receiver, sender);
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -71,10 +74,13 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
         EXPECT_CALL(source, GetSnapshot())
             .WillOnce(Return(snapshot));
+        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x01}, std::byte{0x02}})));
         EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
             {
                 return datagram.Peer == ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000}
-                    && !datagram.Payload.empty();
+                    && datagram.Payload == std::vector<std::byte>{std::byte{0x01}, std::byte{0x02}};
             })))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
@@ -88,6 +94,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
         Api::Snapshot snapshot{};
@@ -95,7 +102,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, receiver, sender);
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -125,6 +132,9 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
         EXPECT_CALL(source, GetSnapshot())
             .WillOnce(Return(snapshot));
+        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x03}})));
         EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
             {
                 return datagram.Peer == ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9001};
@@ -141,6 +151,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
         Api::Snapshot snapshot{};
@@ -148,7 +159,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, receiver, sender);
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -170,6 +181,9 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
         EXPECT_CALL(source, GetSnapshot())
             .WillOnce(Return(snapshot));
+        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x04}})));
 
         server.Tick(
             std::chrono::nanoseconds(std::chrono::milliseconds(100)),
@@ -181,6 +195,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
         Api::Snapshot snapshot{};
@@ -188,7 +203,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, receiver, sender);
+        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
 
         const ::PiSubmarine::Udp::Api::Datagram subscribeDatagram{
             .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
@@ -206,6 +221,9 @@ namespace PiSubmarine::Telemetry::Server::Udp
                 Lease::Api::LeaseValidation{.IsValid = false})));
         EXPECT_CALL(source, GetSnapshot())
             .WillOnce(Return(snapshot));
+        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x05}})));
 
         server.Tick(
             std::chrono::nanoseconds(std::chrono::milliseconds(100)),
