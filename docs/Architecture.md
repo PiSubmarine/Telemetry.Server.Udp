@@ -8,6 +8,7 @@ sends the current telemetry snapshot to subscribed clients.
 The server owns:
 
 - registration of the telemetry lease resource
+- reception of UDP subscription packets
 - validation of telemetry subscriptions against `Lease.Api`
 - mapping `LeaseId -> UDP endpoint`
 - sending the current snapshot to all valid subscribers on tick
@@ -21,7 +22,9 @@ It does not own:
 ## Subscription model
 
 - clients acquire a telemetry lease elsewhere
-- clients subscribe by providing `LeaseId` and their observed UDP endpoint
+- clients subscribe by sending a UDP datagram whose payload is the raw
+  `LeaseId`
+- the server uses the datagram source endpoint as the subscriber endpoint
 - resubscribing with the same `LeaseId` replaces the stored endpoint
 - invalid or expired leases are removed during server ticks
 
