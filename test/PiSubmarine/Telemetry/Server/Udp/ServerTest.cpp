@@ -1,11 +1,14 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <initializer_list>
+#include <string_view>
+
 #include "PiSubmarine/Error/Api/MakeError.h"
 #include "PiSubmarine/Lease/Api/ILeaseValidatorMock.h"
 #include "PiSubmarine/Lease/Api/IResourceRegistryMock.h"
-#include "PiSubmarine/Telemetry/Api/ISourceMock.h"
-#include "PiSubmarine/Telemetry/ISerializerMock.h"
+#include "PiSubmarine/Telemetry/Api/IRawSourceMock.h"
 #include "PiSubmarine/Telemetry/Server/Udp/Server.h"
 #include "PiSubmarine/Udp/Api/IReceiverMock.h"
 #include "PiSubmarine/Udp/Api/ISenderMock.h"
@@ -17,16 +20,43 @@ namespace PiSubmarine::Telemetry::Server::Udp
         using ::testing::_;
         using ::testing::Return;
         using ::testing::StrictMock;
+
+        [[nodiscard]] std::vector<std::byte> EncodeDatagram(
+            const std::initializer_list<std::pair<std::string_view, std::vector<std::byte>>> channels)
+        {
+            std::vector<std::byte> bytes;
+            const auto appendUInt32 = [&bytes](const std::uint32_t value)
+            {
+                bytes.push_back(static_cast<std::byte>((value >> 24U) & 0xFFU));
+                bytes.push_back(static_cast<std::byte>((value >> 16U) & 0xFFU));
+                bytes.push_back(static_cast<std::byte>((value >> 8U) & 0xFFU));
+                bytes.push_back(static_cast<std::byte>(value & 0xFFU));
+            };
+
+            appendUInt32(static_cast<std::uint32_t>(channels.size()));
+            for (const auto& [channel, payload] : channels)
+            {
+                appendUInt32(static_cast<std::uint32_t>(channel.size()));
+                for (const char character : channel)
+                {
+                    bytes.push_back(static_cast<std::byte>(character));
+                }
+
+                appendUInt32(static_cast<std::uint32_t>(payload.size()));
+                bytes.insert(bytes.end(), payload.begin(), payload.end());
+            }
+
+            return bytes;
+        }
     }
 
     TEST(ServerTest, RegistersTelemetryResourceOnConstruction)
     {
-        StrictMock<Api::ISourceMock> source;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
+        Server::Sources sources;
 
         EXPECT_CALL(resourceRegistry, RegisterResource(Lease::Api::ResourceDescriptor{
                         .Id = Lease::Api::ResourceId{.Value = "telemetry-main"},
@@ -35,24 +65,25 @@ namespace PiSubmarine::Telemetry::Server::Udp
                             .LeaseDuration = std::chrono::milliseconds(3000)}}))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
     }
 
-    TEST(ServerTest, TickSendsSnapshotToValidSubscribers)
+    TEST(ServerTest, TickSendsAvailableChannelPayloadsToValidSubscribers)
     {
-        StrictMock<Api::ISourceMock> source;
+        StrictMock<Api::IRawSourceMock> batterySource;
+        StrictMock<Api::IRawSourceMock> motorSource;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
-        Api::Snapshot snapshot{};
-        snapshot.Depth = 2.0_m;
+        Server::Sources sources{
+            {Api::ChannelId{.Value = "battery.main"}, &batterySource},
+            {Api::ChannelId{.Value = "motor.front-left"}, &motorSource}};
 
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -62,25 +93,80 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
                 Lease::Api::LeaseValidation{.IsValid = true})));
 
-        const ::PiSubmarine::Udp::Api::Datagram subscribeDatagram{
-            .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
-            .Payload = {
-                std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
-                std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}};
-
         EXPECT_CALL(receiver, TryReceive())
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(subscribeDatagram)))
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
-        EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
-        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+        EXPECT_CALL(batterySource, GetRaw())
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x01}, std::byte{0x02}})));
+        EXPECT_CALL(motorSource, GetRaw())
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x03}})));
         EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
             {
                 return datagram.Peer == ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000}
-                    && datagram.Payload == std::vector<std::byte>{std::byte{0x01}, std::byte{0x02}};
+                    && datagram.Payload == EncodeDatagram({
+                        {"battery.main", {std::byte{0x01}, std::byte{0x02}}},
+                        {"motor.front-left", {std::byte{0x03}}}});
+            })))
+            .WillOnce(Return(Error::Api::Result<void>{}));
+
+        server.Tick(
+            std::chrono::nanoseconds(std::chrono::milliseconds(100)),
+            std::chrono::nanoseconds(std::chrono::milliseconds(10)));
+    }
+
+    TEST(ServerTest, TickSkipsUnavailableChannelsButStillSendsRemainingPayloads)
+    {
+        StrictMock<Api::IRawSourceMock> batterySource;
+        StrictMock<Api::IRawSourceMock> motorSource;
+        StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
+        StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
+        StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
+        StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
+        Server::Sources sources{
+            {Api::ChannelId{.Value = "battery.main"}, &batterySource},
+            {Api::ChannelId{.Value = "motor.front-left"}, &motorSource}};
+
+        EXPECT_CALL(resourceRegistry, RegisterResource(_))
+            .WillOnce(Return(Error::Api::Result<void>{}));
+
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
+
+        EXPECT_CALL(leaseValidator, ValidateLease(
+                        Lease::Api::LeaseId{.Value = "lease-1"},
+                        Lease::Api::ResourceId{.Value = "telemetry-main"}))
+            .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
+                Lease::Api::LeaseValidation{.IsValid = true})))
+            .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
+                Lease::Api::LeaseValidation{.IsValid = true})));
+
+        EXPECT_CALL(receiver, TryReceive())
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+
+        EXPECT_CALL(batterySource, GetRaw())
+            .WillOnce(Return(std::unexpected(Error::Api::MakeError(Error::Api::ErrorCondition::CommunicationError))));
+        EXPECT_CALL(motorSource, GetRaw())
+            .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
+                std::vector<std::byte>{std::byte{0x03}})));
+        EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
+            {
+                return datagram.Payload == EncodeDatagram({
+                    {"motor.front-left", {std::byte{0x03}}}});
             })))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
@@ -91,18 +177,17 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
     TEST(ServerTest, SubscribeReplacesStoredEndpointForSameLease)
     {
-        StrictMock<Api::ISourceMock> source;
+        StrictMock<Api::IRawSourceMock> batterySource;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
-        Api::Snapshot snapshot{};
+        Server::Sources sources{{Api::ChannelId{.Value = "battery.main"}, &batterySource}};
 
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -114,25 +199,23 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
                 Lease::Api::LeaseValidation{.IsValid = true})));
 
-        const ::PiSubmarine::Udp::Api::Datagram firstSubscribeDatagram{
-            .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
-            .Payload = {
-                std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
-                std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}};
-        const ::PiSubmarine::Udp::Api::Datagram secondSubscribeDatagram{
-            .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9001},
-            .Payload = {
-                std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
-                std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}};
-
         EXPECT_CALL(receiver, TryReceive())
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(firstSubscribeDatagram)))
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(secondSubscribeDatagram)))
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9001},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
-        EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
-        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+        EXPECT_CALL(batterySource, GetRaw())
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x03}})));
         EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
@@ -148,18 +231,17 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
     TEST(ServerTest, TickRemovesSubscribersWithExpiredLeases)
     {
-        StrictMock<Api::ISourceMock> source;
+        StrictMock<Api::IRawSourceMock> batterySource;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
-        Api::Snapshot snapshot{};
+        Server::Sources sources{{Api::ChannelId{.Value = "battery.main"}, &batterySource}};
 
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
 
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
@@ -169,19 +251,17 @@ namespace PiSubmarine::Telemetry::Server::Udp
             .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
                 Lease::Api::LeaseValidation{.IsValid = false})));
 
-        const ::PiSubmarine::Udp::Api::Datagram subscribeDatagram{
-            .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
-            .Payload = {
-                std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
-                std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}};
-
         EXPECT_CALL(receiver, TryReceive())
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(subscribeDatagram)))
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
 
-        EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
-        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+        EXPECT_CALL(batterySource, GetRaw())
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x04}})));
 
@@ -192,36 +272,33 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
     TEST(ServerTest, TickIgnoresInvalidSubscriptionLease)
     {
-        StrictMock<Api::ISourceMock> source;
+        StrictMock<Api::IRawSourceMock> batterySource;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
-        Api::Snapshot snapshot{};
+        Server::Sources sources{{Api::ChannelId{.Value = "battery.main"}, &batterySource}};
 
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
-
-        const ::PiSubmarine::Udp::Api::Datagram subscribeDatagram{
-            .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
-            .Payload = {
-                std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
-                std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}};
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
 
         EXPECT_CALL(receiver, TryReceive())
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(subscribeDatagram)))
-            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
         EXPECT_CALL(leaseValidator, ValidateLease(
                         Lease::Api::LeaseId{.Value = "lease-1"},
                         Lease::Api::ResourceId{.Value = "telemetry-main"}))
             .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
                 Lease::Api::LeaseValidation{.IsValid = false})));
-        EXPECT_CALL(source, GetSnapshot())
-            .WillOnce(Return(Error::Api::Result<Api::Snapshot>(snapshot)));
-        EXPECT_CALL(serializer, Serialize(testing::Eq(snapshot)))
+        EXPECT_CALL(batterySource, GetRaw())
             .WillOnce(Return(Error::Api::Result<std::vector<std::byte>>(
                 std::vector<std::byte>{std::byte{0x05}})));
 
@@ -230,25 +307,45 @@ namespace PiSubmarine::Telemetry::Server::Udp
             std::chrono::nanoseconds(std::chrono::milliseconds(10)));
     }
 
-    TEST(ServerTest, TickSkipsSendingWhenSnapshotIsUnavailable)
+    TEST(ServerTest, TickStillSendsEmptyDatagramWhenNoChannelPayloadIsAvailable)
     {
-        StrictMock<Api::ISourceMock> source;
+        StrictMock<Api::IRawSourceMock> batterySource;
         StrictMock<Lease::Api::IResourceRegistryMock> resourceRegistry;
         StrictMock<Lease::Api::ILeaseValidatorMock> leaseValidator;
-        StrictMock<::PiSubmarine::Telemetry::ISerializerMock> serializer;
         StrictMock<::PiSubmarine::Udp::Api::IReceiverMock> receiver;
         StrictMock<::PiSubmarine::Udp::Api::ISenderMock> sender;
+        Server::Sources sources{{Api::ChannelId{.Value = "battery.main"}, &batterySource}};
 
         EXPECT_CALL(resourceRegistry, RegisterResource(_))
             .WillOnce(Return(Error::Api::Result<void>{}));
 
-        Server server(source, resourceRegistry, leaseValidator, serializer, receiver, sender);
+        Server server(sources, resourceRegistry, leaseValidator, receiver, sender);
+
+        EXPECT_CALL(leaseValidator, ValidateLease(
+                        Lease::Api::LeaseId{.Value = "lease-1"},
+                        Lease::Api::ResourceId{.Value = "telemetry-main"}))
+            .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
+                Lease::Api::LeaseValidation{.IsValid = true})))
+            .WillOnce(Return(Error::Api::Result<Lease::Api::LeaseValidation>(
+                Lease::Api::LeaseValidation{.IsValid = true})));
 
         EXPECT_CALL(receiver, TryReceive())
             .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
+                ::PiSubmarine::Udp::Api::Datagram{
+                    .Peer = ::PiSubmarine::Udp::Api::Endpoint{"127.0.0.1", 9000},
+                    .Payload = {
+                        std::byte{'l'}, std::byte{'e'}, std::byte{'a'},
+                        std::byte{'s'}, std::byte{'e'}, std::byte{'-'}, std::byte{'1'}}})))
+            .WillOnce(Return(Error::Api::Result<std::optional<::PiSubmarine::Udp::Api::Datagram>>(
                 std::optional<::PiSubmarine::Udp::Api::Datagram>{std::nullopt})));
-        EXPECT_CALL(source, GetSnapshot())
+
+        EXPECT_CALL(batterySource, GetRaw())
             .WillOnce(Return(std::unexpected(Error::Api::MakeError(Error::Api::ErrorCondition::CommunicationError))));
+        EXPECT_CALL(sender, Send(testing::Truly([](const ::PiSubmarine::Udp::Api::Datagram& datagram)
+            {
+                return datagram.Payload == EncodeDatagram({});
+            })))
+            .WillOnce(Return(Error::Api::Result<void>{}));
 
         server.Tick(
             std::chrono::nanoseconds(std::chrono::milliseconds(100)),

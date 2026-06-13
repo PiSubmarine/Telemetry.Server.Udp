@@ -1,7 +1,7 @@
 # Telemetry.Server.Udp
 
 `PiSubmarine.Telemetry.Server.Udp` maps telemetry leases to UDP endpoints and
-sends the current telemetry snapshot to subscribed clients.
+sends the current batched raw telemetry payload to subscribed clients.
 
 ## Responsibility
 
@@ -11,12 +11,13 @@ The server owns:
 - reception of UDP subscription packets
 - validation of telemetry subscriptions against `Lease.Api`
 - mapping `LeaseId -> UDP endpoint`
-- snapshot serialization through `Telemetry.Serialization.Api`
-- sending the current snapshot to all valid subscribers on tick
+- collecting raw payloads from configured telemetry channels
+- batching channel payloads into one UDP datagram
+- sending the current batch to all valid subscribers on tick
 
 It does not own:
 
-- telemetry snapshot production
+- domain-specific telemetry serialization
 - lease issuance
 - socket polling implementation
 
@@ -31,6 +32,13 @@ It does not own:
 
 ## Packet format
 
-The current implementation delegates snapshot serialization to
-`Telemetry.Serialization.Api`, so transport logic stays independent from the
-chosen payload format.
+Each UDP datagram contains:
+
+- a 32-bit big-endian channel count
+- for each channel:
+  the channel name length as 32-bit big-endian integer,
+  the channel name bytes,
+  the raw payload length as 32-bit big-endian integer,
+  and the raw payload bytes
+
+Channels whose `IRawSource::GetRaw()` fails are omitted from the datagram.

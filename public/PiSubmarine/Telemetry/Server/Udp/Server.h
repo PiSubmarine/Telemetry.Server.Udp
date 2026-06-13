@@ -1,13 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <chrono>
+#include <map>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "PiSubmarine/Lease/Api/ILeaseValidator.h"
 #include "PiSubmarine/Lease/Api/IResourceRegistry.h"
-#include "PiSubmarine/Telemetry/Api/ISource.h"
-#include "PiSubmarine/Telemetry/ISerializer.h"
+#include "PiSubmarine/Telemetry/Api/ChannelId.h"
+#include "PiSubmarine/Telemetry/Api/IRawSource.h"
 #include "PiSubmarine/Time/ITickable.h"
 #include "PiSubmarine/Udp/Api/IReceiver.h"
 #include "PiSubmarine/Udp/Api/ISender.h"
@@ -17,11 +20,12 @@ namespace PiSubmarine::Telemetry::Server::Udp
     class Server final : public Time::ITickable
     {
     public:
+        using Sources = std::map<Api::ChannelId, const Api::IRawSource*>;
+
         Server(
-            Api::ISource& source,
+            const Sources& sources,
             Lease::Api::IResourceRegistry& resourceRegistry,
             const Lease::Api::ILeaseValidator& leaseValidator,
-            const ::PiSubmarine::Telemetry::ISerializer& serializer,
             ::PiSubmarine::Udp::Api::IReceiver& receiver,
             ::PiSubmarine::Udp::Api::ISender& sender);
 
@@ -35,15 +39,15 @@ namespace PiSubmarine::Telemetry::Server::Udp
         };
 
         [[nodiscard]] static Lease::Api::ResourceId MakeTelemetryResourceId();
+        [[nodiscard]] std::vector<std::byte> BuildPayload() const;
         static void HandleSubscriptionDatagram(
             const ::PiSubmarine::Udp::Api::Datagram& datagram,
             const Lease::Api::ILeaseValidator& leaseValidator,
             std::unordered_map<std::string, Subscriber>& subscribers);
 
-        Api::ISource& m_Source;
+        Sources m_Sources;
         Lease::Api::IResourceRegistry& m_ResourceRegistry;
         const Lease::Api::ILeaseValidator& m_LeaseValidator;
-        const ::PiSubmarine::Telemetry::ISerializer& m_Serializer;
         ::PiSubmarine::Udp::Api::IReceiver& m_Receiver;
         ::PiSubmarine::Udp::Api::ISender& m_Sender;
         std::unordered_map<std::string, Subscriber> m_Subscribers;
