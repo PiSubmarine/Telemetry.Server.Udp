@@ -62,7 +62,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         struct Packet
         {
             Lease::Api::LeaseId LeaseId;
-            Security::Nonce::Api::Nonce Nonce;
+            Security::Api::Nonce Nonce;
             Security::Aead::Api::Ciphertext Ciphertext;
         };
 
@@ -96,7 +96,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
                 return std::unexpected(MakeContractError());
             }
 
-            Security::Nonce::Api::Nonce nonce;
+            Security::Api::Nonce nonce;
             nonce.Value.assign(
                 bytes.begin() + static_cast<std::ptrdiff_t>(offset),
                 bytes.begin() + static_cast<std::ptrdiff_t>(offset + nonceLength));
@@ -115,7 +115,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
 
         [[nodiscard]] std::vector<std::byte> BuildPacket(
             const Lease::Api::LeaseId& leaseId,
-            const Security::Nonce::Api::Nonce& nonce,
+            const Security::Api::Nonce& nonce,
             const Security::Aead::Api::Ciphertext& ciphertext)
         {
             std::vector<std::byte> bytes;
@@ -139,7 +139,7 @@ namespace PiSubmarine::Telemetry::Server::Udp
         const Lease::Api::ILeaseSecretProvider& leaseSecretProvider,
         const Lease::Api::ILeaseValidator& leaseValidator,
         const ::PiSubmarine::Security::Aead::Api::IProvider& aeadProvider,
-        ::PiSubmarine::Security::Nonce::Api::IProvider& nonceProvider,
+        ::PiSubmarine::Security::Api::INonceProvider& nonceProvider,
         ::PiSubmarine::Udp::Api::IReceiver& receiver,
         ::PiSubmarine::Udp::Api::ISender& sender)
         : m_Sources(sources)
